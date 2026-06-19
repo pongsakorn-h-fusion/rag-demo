@@ -1,0 +1,70 @@
+name: Deploy to Azure App Service
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  AZURE_WEBAPP_NAME: rag-demo-app-rd0617c74d82a8
+  AZURE_RESOURCE_GROUP: rag-demo-rg
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION: "20"
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── Frontend build ──────────────────────────────────────────────────
+      - name: Set up Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build frontend (Vite)
+        working-directory: frontend
+        run: npm run build
+
+      - name: Copy frontend dist → backend/app/static
+        run: |
+          rm -rf backend/app/static
+          cp -r frontend/dist backend/app/static
+
+      # ── Backend zip ─────────────────────────────────────────────────────
+      - name: Create deployment zip
+        run: |
+          cd backend
+          zip -r ../app.zip . \
+            --exclude "*.venv*" \
+            --exclude "*__pycache__*" \
+            --exclude "*.pyc" \
+            --exclude ".env" \
+            --exclude "*.egg-info*"
+
+      # ── Azure deploy ─────────────────────────────────────────────────────
+      - name: Login to Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy zip to App Service
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ env.AZURE_WEBAPP_NAME }}
+          package: app.zip
+
+      - name: Azure logout
+        if: always()
+        run: az logout
